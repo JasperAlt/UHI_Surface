@@ -1,0 +1,100 @@
+---
+title: "surface_temp"
+author: "J. Alt"
+date: "February 11, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+
+```{r}
+# Conditionally install pacman library if we can't already load it
+if(!suppressPackageStartupMessages(require(pacman))) {
+  install.packages('pacman')
+  library(pacman)
+}
+
+# Use the pacman::p_load() to handle package installation/loading
+p_load(raster # For working with raster data
+       ,sp # Spatial Library
+       ,sf # Simple Features Library
+       ,rasterVis # Plot nice looking rasters
+       ,rgdal # Geodata abstraction library for reading/writing spatial data
+       ,rgeos # Geometry engine open source for performing spatial transformation
+       ,dplyr # Grammar of data manipulation
+       ,magrittr # Provides the pipe operator (%>%)
+       ,parallel # Used for detectCores()
+       ,pbapply # Multithreading with progress bar
+      #,gdalUtils # Extra GDAL utilities
+       ,snow # Another library for parallel computing
+)
+```
+
+
+## Reproject Landsat to AT projection
+
+```{r}
+require("raster")
+
+landsatTraverse <- function(study_region, trav, outdir){
+  
+  # probably don't need to specify trav (should all have the same bounding box (?))
+  file_path1 <- paste0("./data/ambient_t/", study_region, "_", trav, "_prune.tif")
+  file_path2 <- paste0("./data/st/", study_region, "_", trav, ".tif")
+
+  if(!file.exists(file_path1) || !file.exists(file_path2)) {
+    
+    if(!file.exists(file_path1)) {
+      print(paste0("Yikes: No file ", study_region, "_", trav, "_prune.tif!")) 
+    } else {
+      print(paste0("Yikes: No file ", study_region, "_", trav, ".tif!")) 
+    }
+    
+  } else {
+    
+    # Read ambient temp & grab CRS
+    ambient_t <- raster(file_path1)
+    study_crs <- proj4string(ambient_t)
+    # Make it a bounding box
+    bb <- as(extent(ambient_t), "SpatialPolygons")
+    proj4string(bb) <- proj4string(ambient_t)
+    
+    # Read surface temp & reproject bb
+    surface_t <- raster(file_path2)
+    plot(surface_t)
+    surface_bb <- spTransform(bb, CRSobj=proj4string(surface_t))
+    plot(surface_bb, add=TRUE)
+    
+    if(identical(crs(surface_bb), crs(surface_t))) {
+      cr <- crop(surface_t, surface_bb)
+      m <- mask(cr, surface_bb)
+    } else{
+      stop("These are not projected the same.")
+    }
+    
+    # reproject and resample
+    r <- projectRaster(m, crs=study_crs, method='ngb')
+    r10m <- resample (r, ambient_t, method='ngb')
+    plot(r10m)
+
+    # save it  
+    if(!dir.exists(outdir)) {
+      dir.create(outdir)
+    }
+    writeRaster(r10m
+                ,paste0("data/", outdir, "/st_", study_region, "_", trav, ".tif")
+                ,overwrite=TRUE
+                ,format="GTiff")
+    
+    print(paste0("Hell yeah, we have ", "st_", study_region, "_", trav, ".tif"))
+  }
+  
+}
+
+landsatTraverse("rva", "af", "processed_st")
+```
+
